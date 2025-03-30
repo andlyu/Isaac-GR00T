@@ -133,6 +133,14 @@ def main(config: Config):
         embodiment_tag=embodiment_tag,  # This will override the dataset's embodiment tag to "new_embodiment"
         video_backend=config.video_backend,
     )
+    
+    val_dataset = LeRobotSingleDataset(
+        dataset_path="/home/ubuntu/Isaac-GR00T/demo_data/so100_indoor_val_0",
+        modality_configs=modality_configs,
+        transforms=transforms,
+        embodiment_tag=embodiment_tag,  # This will override the dataset's embodiment tag to "new_embodiment"
+        video_backend=config.video_backend,
+    )
 
     # ------------ step 2: load model ------------
     model = GR00T_N1.from_pretrained(
@@ -182,11 +190,12 @@ def main(config: Config):
         max_steps=config.max_steps,
         save_strategy="steps",
         save_steps=config.save_steps,
-        evaluation_strategy="no",
+        evaluation_strategy="steps",
+        eval_steps=100,
         save_total_limit=8,
         report_to=config.report_to,
         seed=42,
-        do_eval=False,
+        do_eval=True,
         ddp_find_unused_parameters=False,
         ddp_bucket_cap_mb=100,
         torch_compile_mode=None,
@@ -198,6 +207,8 @@ def main(config: Config):
         model=model,
         training_args=training_args,
         resume_from_checkpoint=config.resume,
+        eval_dataset=val_dataset,  # Pass the validation dataset here
+
     )
 
     # 2.3 run experiment

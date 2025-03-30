@@ -18,6 +18,7 @@ import os
 from typing import Optional
 
 import torch
+from torch.utils.data import DataLoader
 import transformers
 from torch.utils.data import Dataset, Sampler
 from transformers.trainer import (
@@ -28,7 +29,11 @@ from transformers.trainer import (
     get_parameter_names,
     is_sagemaker_mp_enabled,
 )
+import torch.nn as nn
+import torch
 
+from typing import Dict, List, Optional, Tuple, Union, Any
+import time
 
 class BaseSampler(Sampler):
     """Sampler for dataset, which enables `set_epoch` for Dataset.
@@ -63,13 +68,18 @@ class BaseSampler(Sampler):
 class DualBrainTrainer(transformers.Trainer):
     def __init__(self, **kwargs):
         self.compute_dtype = kwargs.pop("compute_dtype")
-        super().__init__(**kwargs)
+        super().__init__( **kwargs)
 
     def _get_train_sampler(self):
         return BaseSampler(self.train_dataset, shuffle=True, seed=self.args.seed)
 
-    def _get_eval_sampler(self, eval_dataset):
-        return BaseSampler(eval_dataset, shuffle=False)
+    def _get_eval_sampler(self, eval_dataset):    
+        
+        from torch.utils.data import Subset
+        total_length = len(eval_dataset)
+        indices = list(range(0, total_length, 20))
+        eval_subset = Subset(eval_dataset, indices)
+        return BaseSampler(eval_subset, shuffle=False)
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         outputs = model(inputs)
@@ -116,6 +126,92 @@ class DualBrainTrainer(transformers.Trainer):
             self.optimizer = optimizer_cls(optimizer_grouped_parameters, **optimizer_kwargs)
 
         return self.optimizer
+
+    def prediction_step(
+        self,
+        model: nn.Module,
+        inputs,
+        prediction_loss_only: bool,
+        ignore_keys: Optional[List[str]] = None,
+    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
+        """
+        Perform an evaluation step on the model using inputs.
+        """
+        inputs = self._prepare_inputs(inputs)
+        
+        with torch.no_grad():
+            outputs = model(inputs)
+            
+            if isinstance(outputs, dict) and 'loss' in outputs:
+                loss = outputs['loss'].mean().detach()
+            else:
+                loss = None
+                
+            return (loss, None, None)
+        
+    def evaluate(
+        self,
+        eval_dataset=None,
+        ignore_keys=None,
+        metric_key_prefix="eval",
+    ):
+        # Use the existing evaluation dataset if none is provided
+        eval_dataset = eval_dataset if eval_dataset is not None else self.eval_dataset
+        
+        # Get the evaluation dataloader
+        eval_dataloader = DataLoader(
+            eval_dataset if eval_dataset is not None else self.eval_dataset,
+            sampler=self._get_eval_sampler(eval_dataset if eval_dataset is not None else self.eval_dataset),
+            batch_size=self.args.eval_batch_size,
+            collate_fn=self.data_collator,
+            num_workers=0,  # Use 0 workers to avoid multiprocessing issues
+            pin_memory=self.args.dataloader_pin_memory,
+        )        
+        # Initialize metrics
+        metrics = {}
+        
+        # Start timing
+        start_time = time.time()
+        
+        # Collect losses manually from the model
+        losses = []
+        model = self.model
+        model.eval()
+        num_samples = 0
+        num_steps = 0
+        
+        with torch.no_grad():
+            for batch in eval_dataloader:
+                try:
+                    batch = self._prepare_inputs(batch)
+                    outputs = model(batch)
+                    
+                    # Check if outputs is a BatchFeature object with a 'loss' attribute
+                    if hasattr(outputs, 'loss') or (isinstance(outputs, dict) and 'loss' in outputs):
+                        # Handle both BatchFeature and dictionary cases
+                        loss = outputs.loss if hasattr(outputs, 'loss') else outputs['loss']
+                        losses.append(loss.detach().cpu().item())
+                    
+                    num_samples += len(next(iter(batch.values())))  # Estimate batch size
+                    num_steps += 1
+                except Exception as e:
+                    print(f"Error processing batch {i}: {e}")
+                    continue  # Skip problematic batches
+        
+        # Calculate average loss if we collected any losses
+        avg_loss = sum(losses) / len(losses) if losses else 0.0
+        
+        # Calculate runtime metrics
+        runtime = time.time() - start_time
+        metrics[f"{metric_key_prefix}_loss"] = avg_loss
+        metrics[f"{metric_key_prefix}_runtime"] = runtime
+        metrics[f"{metric_key_prefix}_samples_per_second"] = num_samples / runtime
+        metrics[f"{metric_key_prefix}_steps_per_second"] = num_steps / runtime
+        metrics["epoch"] = self.state.epoch
+        
+        # Log and return metrics
+        self.log(metrics)
+        return metrics
 
     def save_model(self, output_dir: Optional[str], _internal_call: bool):
         ## save tuned model separately

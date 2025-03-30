@@ -37,6 +37,7 @@ class TrainRunner:
         model: GR00T_N1,
         training_args: TrainingArguments,
         train_dataset: LeRobotSingleDataset,
+        eval_dataset: LeRobotSingleDataset,
         resume_from_checkpoint: bool = False,
     ):
         self.training_args = training_args
@@ -65,6 +66,7 @@ class TrainRunner:
             model=model,
             training_args=training_args,
             train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
             data_collator=data_collator,
             compute_dtype=compute_dtype,
         )
@@ -116,6 +118,7 @@ class TrainRunner:
         model,
         training_args,
         train_dataset,
+        eval_dataset,
         data_collator,
         compute_dtype,
         global_batch_size=None,
@@ -135,6 +138,7 @@ class TrainRunner:
             model=model,
             args=training_args,
             train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
             data_collator=data_collator,
             compute_dtype=compute_dtype,
         )
@@ -148,11 +152,11 @@ class TrainRunner:
 
         # Log dataloader information
         train_dl_len = len(trainer.get_train_dataloader())
-        # eval_dl_len = len(trainer.get_eval_dataloader()) # @note (k2): How to manage eval dataloader?
+        eval_dl_len = len(trainer.get_eval_dataloader()) # @note (k2): How to manage eval dataloader?
 
         print(
             f"train dataloader length: {train_dl_len}\n"
-            # f"eval dataloader length: {eval_dl_len}\n"
+            f"eval dataloader length: {eval_dl_len}\n"
             f"train dataset length: {len(trainer.train_dataset)}\n"
             f"GPU memory before training: {torch.cuda.memory_allocated() / 1024 / 1024 / 1024} GB",
             flush=True,

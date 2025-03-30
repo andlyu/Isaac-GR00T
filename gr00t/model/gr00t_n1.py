@@ -161,6 +161,11 @@ class GR00T_N1(PreTrainedModel):
     def forward(
         self,
         inputs: dict,
+        state=None,
+        state_mask=None,
+        segmentation_target=None,
+        segmentation_target_mask=None,
+        **kwargs,  # This will capture any extra arguments
     ) -> BatchFeature:
         backbone_inputs, action_inputs = self.prepare_input(inputs)
         backbone_outputs = self.backbone(backbone_inputs)
